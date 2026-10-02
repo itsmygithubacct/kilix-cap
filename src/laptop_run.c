@@ -8,6 +8,7 @@
  * config/laptop.py: four surfaces share these files, and the only thing
  * that keeps them agreeing is all of them enforcing the same checks. */
 #include "laptop_run.h"
+#include "launcher.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -165,6 +166,30 @@ static bool run_pid_path(const char *id, char *path, size_t size)
     return format_two(path, size, "%s/%s.pid", directory, id);
 }
 
+/* procfs reports st_size=0; read its bounded text until EOF instead. */
+static bool read_proc_stat(const char *path, char *buffer, size_t size)
+{
+    size_t used = 0;
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0 || size == 0) {
+        if (fd >= 0) close(fd);
+        return false;
+    }
+    while (used < size - 1) {
+        ssize_t got = read(fd, buffer + used, size - 1 - used);
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) {
+            close(fd);
+            return false;
+        }
+        if (got == 0) break;
+        used += (size_t)got;
+    }
+    close(fd);
+    buffer[used] = '\0';
+    return used > 0;
+}
+
 /* The contract's liveness check: kill(pid, 0), EPERM counts as alive, a
  * /proc zombie does not — its window is already gone, and only an
  * unreaped parent keeps the pid answering. */
@@ -172,12 +197,10 @@ static bool run_pid_alive(long pid)
 {
     char stat_path[64];
     char stat_text[512];
-    size_t stat_length = 0;
     if (pid <= 1) return false;
     if (kill((pid_t)pid, 0) != 0 && errno != EPERM) return false;
     if (snprintf(stat_path, sizeof stat_path, "/proc/%ld/stat", pid) > 0 &&
-        read_run_file(stat_path, stat_text, sizeof stat_text,
-                      &stat_length)) {
+        read_proc_stat(stat_path, stat_text, sizeof stat_text)) {
         const char *closing = strrchr(stat_text, ')');
         if (closing != NULL && closing[1] == ' ' && closing[2] == 'Z')
             return false;
@@ -423,6 +446,10 @@ bool laptop_run_open(const char *profile_id, char *error,
     char load_error[LAPTOP_ERROR_MAX];
 
     set_error(error, error_size, "");
+    if (!launcher_enabled()) {
+        set_error(error, error_size, "Desktop app launching is disabled.");
+        return false;
+    }
     if (!run_in_kilix_session()) {
         set_error(error, error_size,
                   "Run Kilix Cap inside Kilix to open the laptop.");
@@ -636,6 +663,38 @@ bool laptop_run_selftest(void)
                      "pid 1 and below never count as a session");
     ok &= run_expect(laptop_run_status("../escape", NULL) == -1,
                      "registry ids follow the profile id rules");
+
+    /* This child is not in the launcher's tracked-child array: registry
+     * readers must detect zombies left for another surface to reap. */
+    {
+        pid_t child = fork();
+        if (child == 0) _exit(0);
+        ok &= run_expect(child > 0, "private zombie fixture starts");
+        if (child > 0) {
+            siginfo_t info;
+            ok &= run_expect(waitid(P_PID, (id_t)child, &info,
+                                    WEXITED | WNOWAIT) == 0,
+                             "private child exits without being reaped");
+            ok &= run_expect(laptop_run_record("zombie", (long)child) &&
+                             laptop_run_status("zombie", NULL) == 0,
+                             "an externally tracked zombie is cleared");
+            (void)waitpid(child, NULL, 0);
+        }
+    }
+    {
+        SavedVariable external;
+        char error[LAPTOP_ERROR_MAX];
+        save_and_clear(&external, "KILIX_CAP_EXTERNAL_APPS");
+        (void)setenv("KILIX_CAP_EXTERNAL_APPS", "0", 1);
+        (void)setenv("KILIX_HOME", root, 1);
+        launcher_init();
+        ok &= run_expect(!laptop_run_open("missing", error, sizeof error) &&
+                         strstr(error, "disabled") != NULL,
+                         "disabled launching refuses before profile lookup or spawn");
+        launcher_shutdown();
+        (void)unsetenv("KILIX_HOME");
+        restore_variable(&external);
+    }
 
     /* close: the SIGTERM reaches the recorded pid — held to SIG_IGN
      * here so the selftest survives its own medicine — and the entry
