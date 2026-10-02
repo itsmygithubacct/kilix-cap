@@ -59,7 +59,7 @@ VENDOR_OBJ := \
 
 DEP := $(OBJ:.o=.d) $(VENDOR_OBJ:.o=.d)
 
-.PHONY: all clean test test-code test-render validate-audio validate-visual check-headers \
+.PHONY: all clean test test-code test-laptop-repairs test-render validate-audio validate-visual check-headers \
         forbidden-check sanitize release-check run
 
 all: $(BIN)
@@ -127,7 +127,10 @@ check-headers:
 
 # The no-asset subset: builds and proves the logic without needing a
 # terminal or any generated asset.
-test-code: $(BIN)
+test-laptop-repairs:
+	python3 tests/laptop_repairs.py
+
+test-code: $(BIN) test-laptop-repairs
 	./$(BIN) --version
 	python3 tests/cli_smoke.py --binary ./$(BIN)
 	./$(BIN) --targets-test
