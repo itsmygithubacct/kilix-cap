@@ -165,7 +165,7 @@ test-code: $(BIN) test-laptop-repairs
 	echo "determinism + golden digests: ok"
 
 # Asset validation and exact RGB render structure join the logic gates.
-test: test-code check-headers forbidden-check validate-audio validate-visual test-render
+test: test-code check-headers forbidden-check validate-audio validate-visual test-render test-laptop-repairs
 
 test-render: $(BIN)
 	@set -e; \
