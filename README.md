@@ -84,6 +84,10 @@ interaction and produce a concise status message.
 The build requires a C11 compiler, POSIX threads, zlib, libm, Python 3, and
 Python's standard `curses` module. It downloads nothing.
 
+Clone it with its submodule (`git clone --recursive
+https://github.com/itsmygithubacct/kilix-cap.git`, or
+`git submodule update --init --recursive` in an existing clone), then:
+
 ~~~sh
 make
 ./bin/kilix-cap
