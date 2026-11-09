@@ -5,6 +5,16 @@ TUI, and Kilix Land, for terminals that support the Kitty graphics protocol.
 It renders a true-RGB 480×320 logical canvas and presents it at an integer scale
 so the room art, physical objects, and bitmap type remain crisp.
 
+**Status:** an optional Kilix desktop, installed on first use by Kilix.
+Kilix pins this repository (`KILIX_CAP_DEFAULT_REF=84906fa6` in its
+`scripts/install-kilix-cap.sh`), clones it to
+`~/.local/gpu_terminal/sources/kilix-desktops/kilix-cap` the first time
+`kilix cap` runs, and builds it there. Plebian-OS 0.2.3 inherits that pin
+through Kilix rather than pinning it separately. The pinned commit is on the
+`release/0.2.2-coordinated` branch; `main`, the default branch documented here,
+does not contain its three laptop-lifecycle commits and has one later test
+commit.
+
 The mansion has eight connected, full-color rooms:
 
 - **Study** — thirteen physical desk props launch their mapped desktop apps
@@ -34,6 +44,21 @@ separate layers where their state needs to change. Baked physical consoles,
 books, instruments, and doors use explicit object-sized hit regions and
 identify themselves in the name bar without painting button boxes over the
 room.
+
+## What it does
+
+- Draws a mansion of eight generated rooms on a 480×320 true-RGB canvas and
+  presents it at an integer scale through the Kitty graphics protocol.
+- Launches real desktop apps from physical objects: Study props, Server Room
+  consoles, Library books and Balcony instruments, with fixed argument
+  vectors and no shell.
+- Opens configured Kilix terminal sessions and other desktop providers from
+  the Study laptop's profiles ([docs/LAPTOP.md](docs/LAPTOP.md)).
+- Shows the Kilix 95 games catalog as CDs, floppies and manuals in the Game
+  Room and starts each title in a new Kilix tab.
+- Runs read-only system monitors and a confirm-twice Housekeeping TUI in fresh
+  Kilix tabs.
+- Plays optional audio cues, and makes no network request of its own.
 
 ## Watch the episode
 
@@ -100,138 +125,87 @@ KILIX_CAP_EXTERNAL_APPS=0 ./bin/kilix-cap
 When launching is disabled or an app is unavailable, the room remains in
 place and the concise reason appears temporarily in the name bar.
 
-## Direct app behavior
+## Usage
 
-The Study's Clock, Inbox, Outbox, Mail, Profile, Notepad, Dates, Contacts,
-Files, Phone, Writer, Calculator, and Web props all queue their real mapping
-from the object click itself. The launcher uses fixed argument vectors passed
-directly to `posix_spawn`; it never invokes a shell.
+| Input or command | Effect |
+| --- | --- |
+| click an object | launch its mapped app, open a door, or pick up a Storeroom item |
+| house map strip | Study, Gallery, Store, Server, Games and Clean navigate directly; Lamp toggles the light accent |
+| `q` or Escape | exit, when no modal surface is open |
+| `KILIX_CAP_AUDIO=0` | disable audio |
+| `KILIX_CAP_EXTERNAL_APPS=0` | disable external launches |
+| `KILIX_CAP_CONFIG_HOME=/abs/dir` | relocate the private config (Mail target, `web_home=`) |
+| `KILIX95_PROJECT_HOME=/abs/dir` | read the Game Room catalog from another Kilix 95 checkout |
+| `./bin/kilix-cap --help` | list the headless self-tests (`--interaction-test`, `--render-test DIR`, ...) |
+| `make test` / `make sanitize` | the test gate / sanitizer build |
 
-Mail uses the saved target when one exists. Without one, it opens the first
-installed desktop mail program (or `xdg-email`) directly. The optional saved
-target and Web home remain a private file at
-`~/.local/gpu_terminal/kilix-cap/config`; set `KILIX_CAP_CONFIG_HOME` to an
-absolute directory to relocate it. A target is one executable name/absolute
-path or one `http(s)` webmail URL, never a command line.
+[docs/rooms.md](docs/rooms.md) lists what each room's objects do, and
+[docs/INTERACTIONS.md](docs/INTERACTIONS.md) is the full interaction guide.
 
-The Computer defaults to `https://news.ycombinator.com/`. Its click creates a
-Firefox ESR tab in the background with an isolated temporary profile and an
-explicit `--new-window` start page. A compact green boot sequence runs on the
-physical Study monitor while Kilix captures the browser. The glass zoom begins
-only after Kilix reports capture readiness: either a changed capture after the
-startup snapshot or, with Kilix 0.1.4 or newer, an emitted initial capture
-after three seconds without a change. The grace path is a handoff heuristic,
-not proof that the requested page finished loading. Only then does the exact
-captured tab receive focus. Override the start page by adding a single strict
-URL line to the private config:
+## How it works
 
-~~~text
-web_home=https://example.org/
-~~~
+```text
+ kilix cap ──▶ Kilix clones the pinned kilix-cap, runs make, starts bin/kilix-cap
+                    │
+ bin/kilix-cap (C11): rooms + objects + scenes ──▶ 480x320 RGB canvas
+     │  terminal lifecycle, Kitty graphics and keyboard, raster, PCM mixing
+     │  (kilix-game-sdk submodule, built from source)
+     ├──▶ Kitty graphics frames ──▶ terminal pane
+     ├──▶ posix_spawn fixed argv ──▶ desktop apps, authenticated Kilix tabs
+     └──▶ tools/mansion_tui.py ──▶ monitor and Housekeeping TUIs in Kilix tabs
+```
 
-Only an `http://` or `https://` URL without whitespace is accepted. A missing
-or invalid value falls back to Hacker News.
+The executable is a C11 program with POSIX threads, zlib and libm. Each room is
+a committed background plate with object-sized hit regions; dynamic props,
+Storeroom items and Game Room media are separate layers. Input arrives as
+Kitty keyboard and SGR mouse events; output is presented as Kitty graphics
+frames with 30 Hz pacing. The terminal, graphics, rasterizer and audio layers come from
+the [kilix-game-sdk](https://github.com/itsmygithubacct/kilix-game-sdk#readme)
+submodule. Launches go through one launcher that passes fixed argument
+vectors to `posix_spawn`; anything privileged stays behind `pkexec`.
+[docs/ENGINE.md](docs/ENGINE.md) records the engine invariants and
+[docs/provenance.md](docs/provenance.md) the runtime boundary and art
+provenance.
 
-The Server Room maps:
+## Documentation
 
-| Physical object | Direct result |
-|---|---|
-| Left monitor | Live green-on-black TUI with system logs, warning-or-higher alerts, and local system mail. |
-| Right monitor | Live TUI with user processes and active TCP/UDP network connections. |
-| Brass console | Kilix Settings Center in a fresh tab; outside Kilix, the installed system settings application. |
-| Service rack | Installed disk/storage administration application. |
-| Patch panel | Installed network settings application. |
-| Right cabinet, upper door | Kilix Software Center in a fresh tab; outside Kilix, the installed software administration application. |
-| Right cabinet, lower door | PDF Conversion in a fresh Kilix tab, installed and launched through the shared catalog application verb. |
+| Document | Contents |
+| --- | --- |
+| [docs/rooms.md](docs/rooms.md) | direct app behavior, Housekeeping safety, the Game Room |
+| [docs/INTERACTIONS.md](docs/INTERACTIONS.md) | mansion flow, props, breaker, monitors, pointer and keyboard |
+| [docs/APPS.md](docs/APPS.md) | app and system-tool launch vectors and candidate order |
+| [docs/LAPTOP.md](docs/LAPTOP.md) | the Study laptop and its profiles |
+| [docs/ENGINE.md](docs/ENGINE.md) | engine contract: canvas, objects, scenes, launcher, audio, gates |
+| [docs/testing.md](docs/testing.md) | test targets and headless checks |
+| [docs/provenance.md](docs/provenance.md) | runtime boundary and visual provenance |
+| [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) | vendored code, generation-time tooling, optional external programs |
+| [COPYING-ASSETS.md](COPYING-ASSETS.md) | asset licence scope and exceptions |
 
-The two monitor TUIs are read-only, refresh every two seconds, and open in
-fresh authenticated Kilix tabs. Press `r` to refresh or `q` to close.
+## Related repositories
 
-Library books use `xdg-open` on actual files under this checkout. Balcony
-instruments prefer installed Weather and astronomy applications. Exact
-candidate order is documented in [docs/APPS.md](docs/APPS.md).
+- [Kilix](https://github.com/itsmygithubacct/kilix#readme): the host that pins,
+  builds and launches this desktop (`kilix cap`).
+- [kilix-game-sdk](https://github.com/itsmygithubacct/kilix-game-sdk#readme):
+  the runtime, rendering and audio libraries, as the `third_party/kilix-game-sdk`
+  submodule.
+- [Kilix 95](https://github.com/itsmygithubacct/kilix-95#readme): the games
+  registry the Game Room reads.
+- [kilix-desktop-sdk](https://github.com/itsmygithubacct/kilix-desktop-sdk#readme):
+  the desktop parent repository that carries a mirrored copy of this provider.
+- Other Kilix desktops: [Kilix Land](https://github.com/itsmygithubacct/kilix-land-desktop#readme),
+  [Kilix IceWM](https://github.com/itsmygithubacct/kilix-icewm#readme) and the
+  Kilix TUI desktop in [kilix-tui-utils](https://github.com/itsmygithubacct/kilix-tui-utils#readme).
 
-## Housekeeping safety
+## Part of Plebian-OS
 
-Cleaning Room stations open `tools/mansion_tui.py cleanup` in a fresh Kilix
-tab. It previews every target and requires a second explicit `y`
-confirmation before changing anything.
-
-The fixed actions are:
-
-- user-owned `/tmp` entries older than seven days;
-- the current user's thumbnail cache;
-- the APT download cache via `pkexec apt-get clean`;
-- system journals older than fourteen days via
-  `pkexec journalctl --vacuum-time=14d`; and
-- desktop Trash via `gio trash --empty`, with a bounded user-Trash fallback.
-
-Symlinks are unlinked rather than followed. The helper never accepts a path or
-command from room text, and privileged work remains behind the desktop's
-`pkexec` policy and authentication prompt. Merely entering the Cleaning Room
-or opening Housekeeping removes nothing.
-
-## Game Room
-
-The Game Room reads Kilix 95's own `games.GAMES` registry without modifying
-its storage, prepends Minesweeper and Solitaire, and polls its source once per
-second. Each current title becomes one generated CD case, floppy disk, or
-manual carrying that title's original Kilix 95 pixel icon. Hover reveals the
-full title; click launches it in a fresh authenticated Kilix terminal tab.
-
-By default the checkout is the `kilix-95` sibling of this project inside
-`kilix-desktops`.
-`KILIX95_PROJECT_HOME` can select another absolute checkout. Catalog discovery
-is read-only. A selected game's normal Kilix 95 installer may download and
-persist its pinned content after that explicit launch.
-
-## Verify
-
-~~~sh
-make test
-
-./bin/kilix-cap --interaction-test
-./bin/kilix-cap --launcher-test
-./bin/kilix-cap --game-catalog-test
-./bin/kilix-cap --visual-test
-./bin/kilix-cap --audio-test
-python3 tools/mansion_tui.py selftest
-python3 tools/validate_visual.py
-python3 tests/pty_smoke.py --binary ./bin/kilix-cap
-
-render_dir=$(mktemp -d)
-./bin/kilix-cap --render-test "$render_dir"
-python3 tools/check_render.py "$render_dir"
-
-make sanitize
-~~~
-
-The release render set contains all eight base rooms plus direct-object hover
-and Storeroom movement states. The visual validator checks the exact
-33-file art inventory, dimensions, hashes, generation prompts, eight opaque
-RGB plates, game-media alpha, and all thirteen semantic Study hit IDs.
-
-## Runtime boundary and provenance
-
-Kilix Cap itself makes no runtime network request, downloads nothing, and
-never regenerates committed art. A separately launched desktop application or
-selected Kilix 95 game may access the network or persist data according to its
-own behavior.
-
-The mansion plates and seven room-specific door editions were created with
-the OpenAI built-in image generation tool, then center-fitted offline to
-480×256 P6 RGB with `tools/prepare_visual.py`. Every door edition edits its
-own room source, so its perspective, trim, materials, illumination, and
-shadows belong to that scene. Their complete prompts, dimensions, roles,
-generator-output hashes, lossless public-snapshot records, and earlier
-room/sprite lineage are in
-[docs/visual-provenance.json](docs/visual-provenance.json). The clean-room
-asset boundary and explicit asset-license scope are recorded in
-[COPYING-ASSETS.md](COPYING-ASSETS.md).
-
-Detailed behavior is in [docs/INTERACTIONS.md](docs/INTERACTIONS.md), app and
-TUI launch vectors in [docs/APPS.md](docs/APPS.md), and engine invariants in
-[docs/ENGINE.md](docs/ENGINE.md).
+Kilix Cap is one of the repositories behind
+[Plebian-OS](https://github.com/itsmygithubacct/plebian-os#readme), a Debian
+install whose desktop is [Kilix](https://github.com/itsmygithubacct/kilix#readme)
+running the [Kilix 95](https://github.com/itsmygithubacct/kilix-95#readme)
+desktop through [Pleb](https://github.com/itsmygithubacct/pleb#readme).
+Kilix installs and builds it on first use of `kilix cap`, at a commit pinned in
+Kilix. The map of every repository and how it ships is on the
+[components page](https://github.com/itsmygithubacct/plebian-os/blob/main/docs/components.md).
 
 ## License
 
